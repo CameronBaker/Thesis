@@ -78,7 +78,8 @@ def ComputeOverlap(EC,pfam):
 	
 	url = 'http://www.rcsb.org/pdb/rest/search'
 	protList = []
-	
+
+        #Query the PDB to obtain a list of proteins for a given EC
 	queryText = """
 	<orgPdbCompositeQuery version="1.0">
 	<queryRefinement>
@@ -99,7 +100,8 @@ def ComputeOverlap(EC,pfam):
 	for i in f:
 		i = i.strip()
 		protList.append(i)
-	
+
+        #Query the PDB to obtain a list of proteins for a given pfam ID
 	queryText = """
 	<orgPdbCompositeQuery version="1.0">
 	<queryRefinement>
@@ -121,11 +123,14 @@ def ComputeOverlap(EC,pfam):
 	for i in f:
 		i = i.strip()
 		queryList.append(i)
-	
+
+	#Obtain the overlap between the proteins for a given EC and pfam ID
 	protList = set(protList).intersection(queryList)
 	protList = list(protList)
 	ScoreMatrix = [[-2 for x in range(len(protList))] for x in range(len(protList))]
 	numComplete = 0
+
+        #For each protein, find the distance based overlap between that protein and all others
 	for p1 in range(0,len(protList)):
 		for p2 in range(p1,len(protList)):
 			if protList[p1] == protList[p2]:
@@ -139,16 +144,14 @@ def ComputeOverlap(EC,pfam):
 		numComplete = numComplete + 1
 		print "%d/%d proteins completed"%(numComplete,len(protList))
 	
-	#for row in ScoreMatrix:
-	#	print ",".join(str(num) for num in row)
-	
+	#Prints the results to a csv file for further use
+		
 	f = open('%s.(%s).csv'%(pfam,EC),'w')
 	header = 'Protein,'
 	header = header + ",".join(protList)
 	header = header[:-1] + "\n"
 	f.write(header)
-	#for row in ScoreMatrix:
-	#	print ",".join(str(num) for num in row)
+	
 	for i in range(0,len(ScoreMatrix)):
 		line = protList[i]
 		for num in ScoreMatrix[i]:
