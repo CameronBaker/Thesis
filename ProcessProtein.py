@@ -34,6 +34,12 @@ def ActiveSites(prot):
 	ActiveRes = []
 	response = urllib2.urlopen('https://www.ebi.ac.uk/thornton-srv/databases/CSA/SearchResults.php?PDBID=%s'%prot)
 	
+	#In chain is used to work around the respresentation of residues in CSA
+	#The CSA hosts both the active site within the protein and the same active
+	#sites in homologous proteins. If these did not match, it will incorrectly select
+	#the sites for both the actual protein and the homologous as determined by CSA
+	inchain = True
+	
 	for line in response:
 			#Regex matches active sites for either 1, 2, or 3 digits and appends it to the active site list
 		for i in range(1,4):
@@ -41,15 +47,18 @@ def ActiveSites(prot):
 			CurRes = re.findall(exp,line)
 			for res in CurRes:
 				res = res.split('>')[1].split('<')[0]
-				if res.isdigit():
+				if res.isdigit() and inchain:
 					ActiveRes.append(res)
+					inchain = False
+				else:
+					inchain = True
+				
 		
 		#Only keeps unique residues
 		ActiveRes = list(set(ActiveRes))
 		
 		#Align against the full protein if there are no active residues
 		#As long as one protein has an active site it should align well	
-	print "Protein recieved"
 	if len(ActiveRes) != 0:
 		SelectStatement = "+".join(ActiveRes)
 		cmd.create('%s_active'%(prot),'resi %s in %s'%(SelectStatement,prot))
@@ -57,7 +66,6 @@ def ActiveSites(prot):
 		print "Active sites loaded"
 	else:
 		print "no active sites found"
-		
 	response.close()
 
 cmd.extend("ActiveSites", ActiveSites)
@@ -75,9 +83,35 @@ def SiteDistances(prot):
 	residue's alpha carbon and each other residue's alpha and beta
 	carbons will be determined and returned to the user.
 	'''
+	
+	#Retrieve the list of residues
 	stored.list = []
-	cmd.iterate("(name ca)","stored.list.append((resi,resn))")
+	cmd.iterate("(%s and name ca)"%(prot),"stored.list.append((resi,resn))")
 	print stored.list
+	
+	#Initialization of variables for finding the centermost residue
+	res_num = len(stored.list)
+	closest_res_res = 0
+	smallest_dist = 100
+	for res in stored.list:
+		temp_dist = 0
+		for res2 in stored.list:
+			if res[0] != res2[0]:
+				temp_dist = temp_dist + \
+							cmd.get_distance("resi %s in %s and name ca"%(res[0],prot),
+								         "resi %s in %s and name ca"%(res2[0],prot))
+		temp_dist = temp_dist / (res_num - 1)
+		if temp_dist < smallest_dist:
+			smallest_dist = temp_dist
+			closest_res = res
+	print closest_res
+	print smallest_dist
+	
+	#Uncomment the following for visual representation of distances between centermost residue
+	#for res in stored.list:
+	#	if res != closest_res:
+	#		cmd.distance("resi %s in %s and name ca"%(closest_res[0],prot),
+	#							         "resi %s in %s and name ca"%(res[0],prot))
 	
 cmd.extend("SiteDistances",SiteDistances)
 print "SiteDistances command added"
