@@ -87,7 +87,7 @@ def SiteDistances(prot):
 	#Retrieve the list of residues
 	stored.list = []
 	cmd.iterate("(%s and name ca)"%(prot),"stored.list.append((resi,resn))")
-	print stored.list
+	#print stored.list
 	
 	#Initialization of variables for finding the centermost residue
 	res_num = len(stored.list)
@@ -104,10 +104,33 @@ def SiteDistances(prot):
 		if temp_dist < smallest_dist:
 			smallest_dist = temp_dist
 			closest_res = res
-	print closest_res
-	print smallest_dist
+	#print closest_res
+	#print smallest_dist
 	
-	#Uncomment the following for visual representation of distances between centermost residue
+	#like protein + profile, get it?
+	PROfile = {}
+	
+	#The following calculates the distance between the anchor residue and others
+	#It then sorts the ordering and then calculates angles
+	print "anchor_residue,anchor_num,target_residue,target_num,distance,angle"
+	for res in stored.list:
+		if res != closest_res:
+			dist = cmd.get_distance("resi %s in %s and name ca"%(closest_res[0],prot),
+							         "resi %s in %s and name ca"%(res[0],prot))
+			PROfile[res[0]] = dist
+	PROfile = sorted(PROfile.items(), key=lambda x: x[1])
+	for res in stored.list:
+		for site in range(0,len(PROfile)):
+			angle = cmd.get_angle("resi %s in %s and name ca"%(closest_res[0],prot),
+							         "resi %s in %s and name ca"%(res[0],prot),
+									 "resi %s in %s and name cb"%(res[0],prot))
+			if res[0] == PROfile[site][0]:
+				PROfile[site] = res,PROfile[site][1],angle
+	for res in PROfile:
+		print "%s,%s,%s,%s,%s,%s"%(closest_res[1],closest_res[0],res[0][1],res[0][0],res[1],res[2])
+	
+	
+	#Uncomment the following 4 lines for visual representation of distances between centermost residue
 	#for res in stored.list:
 	#	if res != closest_res:
 	#		cmd.distance("resi %s in %s and name ca"%(closest_res[0],prot),
