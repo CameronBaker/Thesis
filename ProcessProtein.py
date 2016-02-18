@@ -138,3 +138,164 @@ def SiteDistances(prot):
 	
 cmd.extend("SiteDistances",SiteDistances)
 print "SiteDistances command added"
+
+def GenerateList(EC,pfam):
+	'''
+	Given an EC and pfam ID, query the PDB and return the overlap between both datasets
+	for a list of proteins to be used later in the pipeline
+	'''
+	
+	url = 'http://www.rcsb.org/pdb/rest/search'
+	ECList = []
+
+    #Query the PDB to obtain a list of proteins for a given EC
+	queryText = """
+	<orgPdbCompositeQuery version="1.0">
+	<queryRefinement>
+	<queryRefinementLevel>0</queryRefinementLevel>
+	<orgPdbQuery>
+	<version>head</version>
+	<queryType>org.pdb.query.simple.EnzymeClassificationQuery</queryType>
+	<description>Enzyme Classification Search : EC=%s</description>
+	<Enzyme_Classification>%s</Enzyme_Classification>
+	</orgPdbQuery>
+	</queryRefinement>
+	</orgPdbCompositeQuery>
+	""" % (EC,EC)
+
+	req = urllib2.Request(url, data=queryText)
+	queryResult = urllib2.urlopen(req)
+	
+	for line in queryResult:
+		protein = line.strip()
+		ECList.append(protein)
+
+    #Query the PDB to obtain a list of proteins for a given pfam ID
+	queryText = """
+	<orgPdbCompositeQuery version="1.0">
+	<queryRefinement>
+	<queryRefinementLevel>0</queryRefinementLevel>
+	<orgPdbQuery>
+    <version>head</version>
+    <queryType>org.pdb.query.simple.PfamIdQuery</queryType>
+    <description>Pfam Accession Number:  %s</description>
+    <pfamID>%s</pfamID>
+  	</orgPdbQuery>
+	</queryRefinement>
+	</orgPdbCompositeQuery>
+	""" % (pfam,pfam)
+
+	req = urllib2.Request(url, data=queryText)
+	PfamList = []
+	
+	queryResult = urllib2.urlopen(req)
+	
+	for line in queryResult:
+		protein = line.strip()
+		PfamList.append(protein)
+
+	#Obtain the overlap between the proteins for a given EC and pfam ID
+	protList = set(PfamList).intersection(ECList)
+	protList = list(protList)
+	
+	return protList
+	
+def PfamfromProt(pdb):
+	'''
+	This function queries the pfam database for a specific protein 
+	and returns the pfam families that it belongs to
+	'''
+
+	page = urllib2.urlopen('http://pfam.xfam.org/search/keyword?query=%s'%(pdb))
+	page = page.read()
+	
+	#the regex search on the file checks to see if there are multiple results for a given search
+	page_matches = re.search("Pfam: Keyword search results", page)
+	pfamID = []
+	
+	if page_matches:
+		
+		#If there are multiple pfam ID's for a given protein, we parse out all of them
+		page_matches = re.findall("http://pfam.xfam.org/family/.*",page)
+		
+		for match in page_matches:
+			tempID = re.findall("PF[0-9]+", match)
+			if tempID[0] not in pfamID:
+				pfamID.append(tempID[0])
+	else:
+	
+		#In the case of only a single pfam ID, we strip it out and use it
+		page_matches = re.findall("Family: .*",page)
+		if len(page_matches) != 0:
+			pfamID.append(page_matches[0].split("(")[1].split(")")[0])
+		else:
+			return 0
+	
+	return pfamID
+
+cmd.extend("Prot2Pfam",PfamfromProt)
+print "Prot2Pfam command added"
+	
+def ECtoProt(EC):
+
+	url = 'http://www.rcsb.org/pdb/rest/search'
+	ECList = []
+
+    #Query the PDB to obtain a list of proteins for a given EC
+	queryText = """
+	<orgPdbCompositeQuery version="1.0">
+	<queryRefinement>
+	<queryRefinementLevel>0</queryRefinementLevel>
+	<orgPdbQuery>
+	<version>head</version>
+	<queryType>org.pdb.query.simple.EnzymeClassificationQuery</queryType>
+	<description>Enzyme Classification Search : EC=%s</description>
+	<Enzyme_Classification>%s</Enzyme_Classification>
+	</orgPdbQuery>
+	</queryRefinement>
+	</orgPdbCompositeQuery>
+	""" % (EC,EC)
+
+	req = urllib2.Request(url, data=queryText)
+	queryResult = urllib2.urlopen(req)
+	
+	for line in queryResult:
+		protein = line.strip()
+		ECList.append(protein.split(":")[0])
+	
+	return ECList
+
+def generateMotif(EC):
+	
+	proteinList = ECtoProt(EC)
+	pfamDictionary = {}
+	
+	print "%s protiens found for %s"%(len(proteinList),EC)
+	print "Beginning pfam processing"
+	count = 0
+	
+	for protein in proteinList:
+		pfamID = PfamfromProt(protein)
+		if pfamID is 0:
+			continue
+		if len(pfamID) > 1:
+			for ID in pfamID:
+				if ID not in pfamDictionary.keys():
+					pfamDictionary[ID] = protein
+				else:
+					pfamDictionary[ID] = pfamDictionary[ID]+","+protein
+		else:
+			if pfamID[0] not in pfamDictionary.keys():
+				pfamDictionary[pfamID[0]] = protein
+			else:
+				pfamDictionary[pfamID[0]] = pfamDictionary[pfamID[0]]+","+protein
+		count = count + 1
+		if count % 5 == 0:
+			print "%s/%s"%(count,len(proteinList))
+	
+	for entry in pfamDictionary.keys():
+		print "%s: %s"%(entry,pfamDictionary[entry])
+	
+cmd.extend("GenerateMotif",generateMotif)
+print "GenerateMotif command added"
+
