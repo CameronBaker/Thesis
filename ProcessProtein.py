@@ -11,6 +11,12 @@ to others within the functional group
 Cameron Baker
 '''
 
+'''
+Interesting notes
+Duplicate features in 1g66, 1h1w
+Elimination of substitutes and rotamers by reducing down to the beta carbon
+'''
+
 from pymol import cmd
 from pymol import stored
 import urllib2
@@ -60,12 +66,16 @@ def ActiveSites(prot):
 		#Align against the full protein if there are no active residues
 		#As long as one protein has an active site it should align well	
 	if len(ActiveRes) != 0:
+		cmd.remove('%s and not chain a'%(prot))
 		SelectStatement = "+".join(ActiveRes)
 		cmd.create('%s_active'%(prot),'resi %s in %s'%(SelectStatement,prot))
 		cmd.delete(prot)
 		print "Active sites loaded"
+		return 1
 	else:
-		print "no active sites found"
+		cmd.delete(prot)
+		print "no active sites found for "+prot
+		return 0
 	response.close()
 
 cmd.extend("ActiveSites", ActiveSites)
@@ -96,10 +106,26 @@ def SiteDistances(prot):
 	for res in stored.list:
 		temp_dist = 0
 		for res2 in stored.list:
-			if res[0] != res2[0]:
-				temp_dist = temp_dist + \
-							cmd.get_distance("resi %s in %s and name ca"%(res[0],prot),
-								         "resi %s in %s and name ca"%(res2[0],prot))
+			try:
+				if res[0] != res2[0]:
+					temp_dist = temp_dist + \
+								cmd.get_distance("resi %s in %s and name ca"%(res[0],prot),
+											"resi %s in %s and name ca"%(res2[0],prot))
+			except:
+				stored_tmp = stored.list
+				if res[0] != res2[0]:
+					stored.list = []
+					cmd.iterate("(resi %s in %s and name ca)"%(res[0],prot),"stored.list.append((ID))")
+					if len(stored.list) > 1:
+						cmd.remove("id %s"%(stored.list[-1]))
+					stored.list = []
+					cmd.iterate("(resi %s in %s and name ca)"%(res2[0],prot),"stored.list.append((ID))")
+					if len(stored.list) > 1:
+						cmd.remove("id %s"%(stored.list[-1]))
+					temp_dist = temp_dist + \
+								cmd.get_distance("resi %s in %s and name ca"%(res[0],prot),
+											"resi %s in %s and name ca"%(res2[0],prot))
+				stored.list = stored_tmp
 		temp_dist = temp_dist / (res_num - 1)
 		if temp_dist < smallest_dist:
 			smallest_dist = temp_dist
@@ -112,7 +138,6 @@ def SiteDistances(prot):
 	
 	#The following calculates the distance between the anchor residue and others
 	#It then sorts the ordering and then calculates angles
-	print "anchor_residue,anchor_num,target_residue,target_num,distance,angle"
 	for res in stored.list:
 		if res != closest_res:
 			dist = cmd.get_distance("resi %s in %s and name ca"%(closest_res[0],prot),
@@ -121,14 +146,30 @@ def SiteDistances(prot):
 	PROfile = sorted(PROfile.items(), key=lambda x: x[1])
 	for res in stored.list:
 		for site in range(0,len(PROfile)):
-			angle = cmd.get_angle("resi %s in %s and name ca"%(closest_res[0],prot),
-							         "resi %s in %s and name ca"%(res[0],prot),
-									 "resi %s in %s and name cb"%(res[0],prot))
+			try:
+				angle = cmd.get_angle("resi %s in %s and name ca"%(closest_res[0],prot),
+						         "resi %s in %s and name ca"%(res[0],prot),
+								 "resi %s in %s and name cb"%(res[0],prot))
+			except:
+				print "Duplicate atoms found for a given carbon beta. Deleting duplicate"
+				stored.list = []
+				cmd.iterate("(resi %s in %s and name ca)"%(res[0],prot),"stored.list.append((ID))")
+				if len(stored.list) > 1:
+					cmd.remove("id %s"%(stored.list[-1]))
+				cmd.iterate("(resi %s in %s and name cb)"%(res[0],prot),"stored.list.append((ID))")
+				if len(stored.list) > 1:
+					cmd.remove("id %s"%(stored.list[-1]))
+				angle = cmd.get_angle("resi %s in %s and name ca"%(closest_res[0],prot),
+						         "resi %s in %s and name ca"%(res[0],prot),
+								 "resi %s in %s and name cb"%(res[0],prot))
+								 
 			if res[0] == PROfile[site][0]:
 				PROfile[site] = res,PROfile[site][1],angle
-	for res in PROfile:
-		print "%s,%s,%s,%s,%s,%s"%(closest_res[1],closest_res[0],res[0][1],res[0][0],res[1],res[2])
 	
+	#Uncomment the following for numbers related to the residues in the structure
+	#print "anchor_residue,anchor_num,target_residue,target_num,distance,angle"
+	#for res in PROfile:
+	#	print "%s,%s,%s,%s,%s,%s"%(closest_res[1],closest_res[0],res[0][1],res[0][0],res[1],res[2])
 	
 	#Uncomment the following 4 lines for visual representation of distances between centermost residue
 	#for res in stored.list:
@@ -136,107 +177,40 @@ def SiteDistances(prot):
 	#		cmd.distance("resi %s in %s and name ca"%(closest_res[0],prot),
 	#							         "resi %s in %s and name ca"%(res[0],prot))
 	
+	#Comment out the delete command to keep residues after quantification. Good for visualization
+	cmd.delete("all")
+	return PROfile
+	
 cmd.extend("SiteDistances",SiteDistances)
 print "SiteDistances command added"
-
-def GenerateList(EC,pfam):
+	
+def UPfromProt(pdb):
 	'''
-	Given an EC and pfam ID, query the PDB and return the overlap between both datasets
-	for a list of proteins to be used later in the pipeline
+	This function queries the uniprot database for a specific protein 
+	and returns the uniprot families that it belongs to
 	'''
 	
-	url = 'http://www.rcsb.org/pdb/rest/search'
-	ECList = []
+	response = urllib2.urlopen('https://www.ebi.ac.uk/thornton-srv/databases/CSA/SearchResults.php?PDBID=%s'%pdb)
+	UPList = []
+	
+	#Parse the Uniprot family out of the webpage
+	for line in response:
+		exp = "UNIID=[A-Z][0-9]+"
+		curLine = re.findall(exp,line)
+		if len(curLine) > 0:
+			UPList.append(curLine[0].split("=")[1])
+	
+	if len(UPList) is 0:
+		return 0
+	return UPList
 
-    #Query the PDB to obtain a list of proteins for a given EC
-	queryText = """
-	<orgPdbCompositeQuery version="1.0">
-	<queryRefinement>
-	<queryRefinementLevel>0</queryRefinementLevel>
-	<orgPdbQuery>
-	<version>head</version>
-	<queryType>org.pdb.query.simple.EnzymeClassificationQuery</queryType>
-	<description>Enzyme Classification Search : EC=%s</description>
-	<Enzyme_Classification>%s</Enzyme_Classification>
-	</orgPdbQuery>
-	</queryRefinement>
-	</orgPdbCompositeQuery>
-	""" % (EC,EC)
-
-	req = urllib2.Request(url, data=queryText)
-	queryResult = urllib2.urlopen(req)
-	
-	for line in queryResult:
-		protein = line.strip()
-		ECList.append(protein)
-
-    #Query the PDB to obtain a list of proteins for a given pfam ID
-	queryText = """
-	<orgPdbCompositeQuery version="1.0">
-	<queryRefinement>
-	<queryRefinementLevel>0</queryRefinementLevel>
-	<orgPdbQuery>
-    <version>head</version>
-    <queryType>org.pdb.query.simple.PfamIdQuery</queryType>
-    <description>Pfam Accession Number:  %s</description>
-    <pfamID>%s</pfamID>
-  	</orgPdbQuery>
-	</queryRefinement>
-	</orgPdbCompositeQuery>
-	""" % (pfam,pfam)
-
-	req = urllib2.Request(url, data=queryText)
-	PfamList = []
-	
-	queryResult = urllib2.urlopen(req)
-	
-	for line in queryResult:
-		protein = line.strip()
-		PfamList.append(protein)
-
-	#Obtain the overlap between the proteins for a given EC and pfam ID
-	protList = set(PfamList).intersection(ECList)
-	protList = list(protList)
-	
-	return protList
-	
-def PfamfromProt(pdb):
-	'''
-	This function queries the pfam database for a specific protein 
-	and returns the pfam families that it belongs to
-	'''
-
-	page = urllib2.urlopen('http://pfam.xfam.org/search/keyword?query=%s'%(pdb))
-	page = page.read()
-	
-	#the regex search on the file checks to see if there are multiple results for a given search
-	page_matches = re.search("Pfam: Keyword search results", page)
-	pfamID = []
-	
-	if page_matches:
-		
-		#If there are multiple pfam ID's for a given protein, we parse out all of them
-		page_matches = re.findall("http://pfam.xfam.org/family/.*",page)
-		
-		for match in page_matches:
-			tempID = re.findall("PF[0-9]+", match)
-			if tempID[0] not in pfamID:
-				pfamID.append(tempID[0])
-	else:
-	
-		#In the case of only a single pfam ID, we strip it out and use it
-		page_matches = re.findall("Family: .*",page)
-		if len(page_matches) != 0:
-			pfamID.append(page_matches[0].split("(")[1].split(")")[0])
-		else:
-			return 0
-	
-	return pfamID
-
-cmd.extend("Prot2Pfam",PfamfromProt)
-print "Prot2Pfam command added"
+cmd.extend("Prot2UP",UPfromProt)
+print "Prot2UP command added"
 	
 def ECtoProt(EC):
+	'''
+	This function retrieves the list of proteins for a given EC from the protein data bank
+	'''
 
 	url = 'http://www.rcsb.org/pdb/rest/search'
 	ECList = []
@@ -258,7 +232,8 @@ def ECtoProt(EC):
 
 	req = urllib2.Request(url, data=queryText)
 	queryResult = urllib2.urlopen(req)
-	
+
+	#Parse the query into a usable list
 	for line in queryResult:
 		protein = line.strip()
 		ECList.append(protein.split(":")[0])
@@ -268,34 +243,99 @@ def ECtoProt(EC):
 def generateMotif(EC):
 	
 	proteinList = ECtoProt(EC)
-	pfamDictionary = {}
+	UPDictionary = {}
+	#cmd.feedback('disable','all','actions')
+	#cmd.feedback("disable","all","results")
 	
+	#Information for the user based on the initial retrieval of proteins
 	print "%s protiens found for %s"%(len(proteinList),EC)
-	print "Beginning pfam processing"
+	print "Beginning protein grouping"
 	count = 0
 	
+	#Used to contain information on incomplete records (no link between catalytic site atlas and UniProt)
+	NullCount = 0
+	NullList = []
+	
+	#Subset the protein list for now
+	if len(proteinList) > 100:
+		proteinList = proteinList[0:100]
+	
+	
 	for protein in proteinList:
-		pfamID = PfamfromProt(protein)
-		if pfamID is 0:
+		UPID = UPfromProt(protein)
+		if UPID is 0:
+			count = count + 1
+			if count % 5 == 0:
+				print "%s/%s"%(count,len(proteinList))
+			NullCount = NullCount + 1
+			NullList.append(protein)
 			continue
-		if len(pfamID) > 1:
-			for ID in pfamID:
-				if ID not in pfamDictionary.keys():
-					pfamDictionary[ID] = protein
+		if len(UPID) > 1:
+			for ID in UPID:
+				if ID not in UPDictionary.keys():
+					UPDictionary[ID] = protein
 				else:
-					pfamDictionary[ID] = pfamDictionary[ID]+","+protein
+					UPDictionary[ID] = UPDictionary[ID]+","+protein
 		else:
-			if pfamID[0] not in pfamDictionary.keys():
-				pfamDictionary[pfamID[0]] = protein
+			if UPID[0] not in UPDictionary.keys():
+				UPDictionary[UPID[0]] = protein
 			else:
-				pfamDictionary[pfamID[0]] = pfamDictionary[pfamID[0]]+","+protein
+				UPDictionary[UPID[0]] = UPDictionary[UPID[0]]+","+protein
 		count = count + 1
 		if count % 5 == 0:
 			print "%s/%s"%(count,len(proteinList))
 	
-	for entry in pfamDictionary.keys():
-		print "%s: %s"%(entry,pfamDictionary[entry])
+	print "%s proteins with incomplete records"%(NullCount)
+	
+	for entry in UPDictionary.keys():
+		print "%s: %s"%(entry,UPDictionary[entry])
+		ProteinSet = UPDictionary[entry].split(",")
+		ProfileSet = []
+		DistDict = {}
+		AngleDict = {}
+		for protein in ProteinSet:
+			#print "NOW ON "+protein
+			if ActiveSites(protein) == 1:
+				protein = protein + "_active"
+				PROfile = SiteDistances(protein)
+				ProfileSet.append(PROfile)
+				#for res in PROfile:
+				#	print res
+		if len(ProfileSet) > 0:
+			for PROfile in ProfileSet:
+				for res in PROfile:
+					key = res[0]
+					
+					if key not in DistDict.keys():
+						DistDict[key] = res[1]
+					else:
+						DistDict[key] = (DistDict[key] + res[1]) / 2
+						
+					if key not in AngleDict.keys():
+						AngleDict[key] = res[2]
+					else:
+						AngleDict[key] = (AngleDict[key] + res[2]) / 2
+		
+			print "------------------------------"
+			print "MOTIF STATS for %s_%s:"%(EC,entry)
+			print "Different distances: %s across %s proteins"%(str(len(DistDict.keys())),len(ProteinSet))
+			for key in DistDict:
+				tmp = str(key[0]) + ","+ str(key[1])
+				print tmp+": "+str(DistDict[key])
+			print "Different angles: %s across %s proteins"%(str(len(AngleDict.keys())),len(ProteinSet))
+			for key in AngleDict:
+				tmp = str(key[0]) + ","+ str(key[1])
+				print tmp+": "+str(AngleDict[key])
+			print "-------------------------------"
+		else:
+			print "skipping %s. No usable proteins found"%(entry)
+	
+	#For each entry (new motif)
+		#Choose an arbitrary protein
+		#Check for subsitutions
+			#if there are subsitutions cut the residue down to the beta carbon
+		#Adjust distances
+		#Adjust angles
 	
 cmd.extend("GenerateMotif",generateMotif)
 print "GenerateMotif command added"
-
