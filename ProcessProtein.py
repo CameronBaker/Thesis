@@ -21,6 +21,11 @@ from pymol import cmd
 from pymol import stored
 import urllib2
 import re
+import os
+
+using_windows = False
+if os.name == "nt":
+	using_windows = True
 
 def ActiveSites(prot):
 	'''
@@ -70,7 +75,7 @@ def ActiveSites(prot):
 		SelectStatement = "+".join(ActiveRes)
 		cmd.create('%s_active'%(prot),'resi %s in %s'%(SelectStatement,prot))
 		cmd.delete(prot)
-		print "Active sites loaded"
+		#print "Active sites loaded"
 		return 1
 	else:
 		cmd.delete(prot)
@@ -139,10 +144,10 @@ def SiteDistances(prot):
 	#The following calculates the distance between the anchor residue and others
 	#It then sorts the ordering and then calculates angles
 	for res in stored.list:
-		if res != closest_res:
-			dist = cmd.get_distance("resi %s in %s and name ca"%(closest_res[0],prot),
+		#if res != closest_res:
+		dist = cmd.get_distance("resi %s in %s and name ca"%(closest_res[0],prot),
 							         "resi %s in %s and name ca"%(res[0],prot))
-			PROfile[res[0]] = dist
+		PROfile[res[0]] = dist
 	PROfile = sorted(PROfile.items(), key=lambda x: x[1])
 	for res in stored.list:
 		for site in range(0,len(PROfile)):
@@ -240,8 +245,73 @@ def ECtoProt(EC):
 	
 	return ECList
 
+def adjustRes(anchor, res, distance, angle):
+	
+	stored.list = []
+	
+	cmd.iterate("(resi %s and name ca)"%(res[0]),"stored.list.append((ID))")
+	if len(stored.list) > 1:
+		cmd.remove("id %s"%(stored.list[0]))
+	stored.list = []
+	cmd.iterate("(resi %s and name ca)"%(anchor[0][0]),"stored.list.append((ID))")
+
+	if len(stored.list) > 1:
+		cmd.remove("id %s"%(stored.list[0]))
+	dist = cmd.get_distance("resi %s and name ca"%(anchor[0][0]),
+							    "resi %s and name ca"%(res[0]))
+								
+	stored.list = []
+	cmd.iterate("(resi %s and name cb)"%(res[0]),"stored.list.append((ID))")
+	if len(stored.list) > 1:
+		cmd.remove("id %s"%(stored.list[0]))
+	cur_angle = cmd.get_angle("resi %s and name ca"%(anchor[0][0]),
+						         "resi %s and name ca"%(res[0]),
+								 "resi %s and name cb"%(res[0]))
+	
+	angle = angle - cur_angle
+	print angle
+
+	diff = dist - distance	
+	if diff < 0:
+		diff = -1 * diff
+	
+	anchor_ca_coord = cmd.get_coords("resi %s and name ca"%anchor[0][0])
+	other_ca_coord = cmd.get_coords("resi %s and name ca"%res[0])
+	
+	vx = anchor_ca_coord[0][0] - other_ca_coord[0][0]
+	vy = anchor_ca_coord[0][1] - other_ca_coord[0][1]
+	vz = anchor_ca_coord[0][2] - other_ca_coord[0][2]
+	res_vector = [vx,vy,vz]
+	translation_vector = [res_vector[0] * diff,res_vector[1] * diff,res_vector[2] * diff]
+	
+	cmd.translate(translation_vector,"resi %s"%res[0])
+	#Vector = ac anchor - ac other = a1 - o1 , a2 - o2 , a3 - o3
+	#for each atom in other
+	#	that atoms position + difference in distance * vector between carbon alphas 
+
+	
+	#Angle change
+
+def adjustWrapper(prot):
+
+	ActiveSites(prot)
+	profile = SiteDistances("%s_active"%(prot))
+	for line in profile:
+		print line
+	ActiveSites(prot)
+	anchor = []
+	for res in profile:
+		if res[1] == 0:
+			anchor = res
+	for res in profile:
+		if res is not anchor:
+			adjustRes(anchor,res[0],res[1],res[2])
+
+cmd.extend("translate",adjustWrapper)
+	
 def generateMotif(EC):
 	
+	cmd.cd("C:\Users\Cameron\Documents\Pymol")
 	proteinList = ECtoProt(EC)
 	UPDictionary = {}
 	#cmd.feedback('disable','all','actions')
@@ -293,19 +363,34 @@ def generateMotif(EC):
 		ProfileSet = []
 		DistDict = {}
 		AngleDict = {}
+		count = 0
 		for protein in ProteinSet:
-			#print "NOW ON "+protein
+			#This generates the active sites and quanitifies the distances and angles
+			#Only keeps the active site if it successfully generated
+			#Successful generation is due to the active sites prescense within the CSA
+			count = count + 1
 			if ActiveSites(protein) == 1:
 				protein = protein + "_active"
 				PROfile = SiteDistances(protein)
 				ProfileSet.append(PROfile)
+			if count % 5 == 0:
+				print "%s/%s"%(count,len(ProteinSet))
+				
+				#Uncomment the following to print out the distances and angles for a given protein
 				#for res in PROfile:
 				#	print res
 		if len(ProfileSet) > 0:
+		
+			#Below is finding the average distance and angle between each residue
+			#within the active site
+			consensusDic = []
+			anchor = []
 			for PROfile in ProfileSet:
 				for res in PROfile:
 					key = res[0]
-					
+					if res[1] == 0:
+							anchor = res
+							
 					if key not in DistDict.keys():
 						DistDict[key] = res[1]
 					else:
@@ -315,27 +400,51 @@ def generateMotif(EC):
 						AngleDict[key] = res[2]
 					else:
 						AngleDict[key] = (AngleDict[key] + res[2]) / 2
-		
 			print "------------------------------"
 			print "MOTIF STATS for %s_%s:"%(EC,entry)
 			print "Different distances: %s across %s proteins"%(str(len(DistDict.keys())),len(ProteinSet))
 			for key in DistDict:
 				tmp = str(key[0]) + ","+ str(key[1])
-				print tmp+": "+str(DistDict[key])
-			print "Different angles: %s across %s proteins"%(str(len(AngleDict.keys())),len(ProteinSet))
-			for key in AngleDict:
-				tmp = str(key[0]) + ","+ str(key[1])
-				print tmp+": "+str(AngleDict[key])
-			print "-------------------------------"
+				consensusDic.append([[key[0],key[1]],DistDict[key],AngleDict[key]])
+			
+			for line in consensusDic:
+				print line
+			
+			model = UPDictionary[entry].split(",")[0]
+			ActiveSites(model)
+			
+			ActiveSite = []
+			SubstituteSet = []
+			for key in DistDict:
+					resn = str(key).split(",")[0]
+					if resn in ActiveSite:
+						SubstituteSet.append(resn)
+					else:
+						ActiveSite.append(resn)
+			
+			for site in SubstituteSet:
+				#remove resn thr and not name ca+cb
+				#ADJUST This. print out the residues being adjusted
+				print "removing resi %s except for carbon alpha and carbon beta"%(site.split("'")[1])
+				cmd.remove("resi %s and not name ca+cb"%(site.split("'")[1]))
+				
+			for key in consensusDic:
+				adjustRes(anchor, key[0], key[1], key[2])
+				
+			cmd.save("%s_active.pdb"%model,"%s_active"%model)
+			for prot in UPDictionary[entry].split(","):
+				if using_windows:
+					os.system("del %s.pdb"%prot)
+				else:
+					os.system("rm %s.pdb"%prot)
+			cmd.remove("%s_active"%(model))
+
 		else:
 			print "skipping %s. No usable proteins found"%(entry)
+			UPDictionary.pop(entry)
 	
-	#For each entry (new motif)
-		#Choose an arbitrary protein
-		#Check for subsitutions
-			#if there are subsitutions cut the residue down to the beta carbon
-		#Adjust distances
-		#Adjust angles
+	for entry in UPDictionary.keys():
+		ProteinSet = UPDictionary[entry].split(",")
 	
 cmd.extend("GenerateMotif",generateMotif)
 print "GenerateMotif command added"
