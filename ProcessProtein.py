@@ -306,9 +306,7 @@ def adjustRes(anchor, res, distance, angle, protname):
 	
 	#print angle
 
-	diff = dist - distance	
-	if diff < 0:
-		diff = -1 * diff
+	diff = distance - diff
 	
 	anchor_ca_coord = cmd.get_coords("resi %s in %s and name ca"%(anchor[0][0],protname))
 	other_ca_coord = cmd.get_coords("resi %s in %s and name ca"%(res[0],protname))
