@@ -14,6 +14,7 @@ Cameron Baker
 '''
 Interesting notes
 Duplicate features in 1g66, 1h1w
+NOTE: generate sets for 2.7.11.1 and up 1.1.1.1
 '''
 
 from pymol import cmd
@@ -21,6 +22,7 @@ from pymol import stored
 import urllib2
 import re
 import os
+from requests import exceptions
 
 def ActiveSites(prot):
 	'''
@@ -139,7 +141,6 @@ def SiteDistances(prot):
 	#The following calculates the distance between the anchor residue and others
 	#It then sorts the ordering and then calculates angles
 	for res in stored.list:
-		#if res != closest_res:
 		dist = cmd.get_distance("resi %s in %s and name ca"%(closest_res[0],prot),
 							         "resi %s in %s and name ca"%(res[0],prot))
 		PROfile[res[0]] = dist
@@ -202,17 +203,24 @@ def UPfromProt(pdb):
 	try:
 		response = urllib2.urlopen('https://www.ebi.ac.uk/thornton-srv/databases/CSA/SearchResults.php?PDBID=%s'%(pdb),timeout=20)
 	except:
-		response = urllib2.urlopen('https://www.ebi.ac.uk/thornton-srv/databases/CSA/SearchResults.php?PDBID=%s'%(pdb),timeout=20)
+		try:
+			response = urllib2.urlopen('https://www.ebi.ac.uk/thornton-srv/databases/CSA/SearchResults.php?PDBID=%s'%(pdb),timeout=20)
+		except:
+			print "Timeout"
+			return 0
 	UPList = []
 	
 	#Parse the Uniprot family out of the webpage
-	for line in response:
-		exp = "UNIID=[A-Z][0-9]+"
-		curLine = re.findall(exp,line)
-		if len(curLine) > 0:
-			UPList.append(curLine[0].split("=")[1])
+	try:
+		for line in response:
+			exp = "UNIID=[A-Z][0-9]+"
+			curLine = re.findall(exp,line)
+			if len(curLine) > 0:
+				UPList.append(curLine[0].split("=")[1])
 	
-	if len(UPList) is 0:
+		if len(UPList) is 0:
+			return 0
+	except:
 		return 0
 	return UPList
 
@@ -234,7 +242,10 @@ def PFfromProt(pdb):
 		try:
 			response = urllib2.urlopen('http://www.uniprot.org/uniprot/%s'%(id),timeout=20)
 		except:
-			response = urllib2.urlopen('http://www.uniprot.org/uniprot/%s'%(id),timeout=20)
+			try: 
+				response = urllib2.urlopen('http://www.uniprot.org/uniprot/%s'%(id),timeout=20)
+			except:
+				return 0
 		
 		for line in response:
 			exp = "PF\\d+"
@@ -282,12 +293,16 @@ def ECtoProt(EC):
 	return ECList
 
 def adjustRes(anchor, res, distance, angle, protname):
+	'''
+	This method is responsible for translating the distance and angle
+	between the anchor and another amino acid into the correct distance
+	'''
 	
 	stored.list = []
-	
 	if res[0] == anchor[0][0]:
 		return
-		
+	
+	#A good chunk of the following is responsible for filtering out duplicate atoms from pdb structures
 	cmd.iterate("(resi %s in %s and name ca)"%(res[0],protname),"stored.list.append((ID))")
 	if len(stored.list) > 1:
 		cmd.remove("id %s"%(stored.list[0]))
@@ -296,29 +311,34 @@ def adjustRes(anchor, res, distance, angle, protname):
 
 	if len(stored.list) > 1:
 		cmd.remove("id %s"%(stored.list[0]))
+		
+	#Retrieves the distance between the anchor and other residues
 	dist = cmd.get_distance("resi %s in %s and name ca"%(anchor[0][0],protname),
 							    "resi %s in %s and name ca"%(res[0],protname))
-								
+	#More residue cleaning
 	stored.list = []
 	cmd.iterate("(resi %s in %s and name cb)"%(res[0],protname),"stored.list.append((ID))")
 	if len(stored.list) > 1:
 		cmd.remove("id %s"%(stored.list[0]))
-	
-	#print angle
 
+	#finds the difference between the average distance and the distance found between the residues
 	diff = distance - dist
 	
+	#Retrieves the 3D coordiantes of the alpha carbons in both residues
 	anchor_ca_coord = cmd.get_coords("resi %s in %s and name ca"%(anchor[0][0],protname))
 	other_ca_coord = cmd.get_coords("resi %s in %s and name ca"%(res[0],protname))
 	
+	#Finds the translation vector
 	vx = anchor_ca_coord[0][0] - other_ca_coord[0][0]
 	vy = anchor_ca_coord[0][1] - other_ca_coord[0][1]
 	vz = anchor_ca_coord[0][2] - other_ca_coord[0][2]
 	res_vector = [vx,vy,vz]
 	translation_vector = [res_vector[0] * diff,res_vector[1] * diff,res_vector[2] * diff]
 	
+	#Apply that vector to each atom in the other residue
 	cmd.translate(translation_vector,"resi %s in %s"%(res[0],protname))
 
+	#Sets the dihedral angle to be the consensus
 	if res[1] == "GLY":
 		cmd.set_dihedral("resi %s in %s and name ca"%(anchor[0][0],protname),
 				 "resi %s in %s and name ca"%(res[0],protname),
@@ -329,25 +349,8 @@ def adjustRes(anchor, res, distance, angle, protname):
 				 "resi %s in %s and name ca"%(res[0],protname),
 				 "resi %s in %s and name ca"%(res[0],protname),
 				 "resi %s in %s and name cb"%(res[0],protname),angle)
-
-def adjustWrapper(prot):
-
-	ActiveSites(prot)
-	profile = SiteDistances("%s_active"%(prot))
-	for line in profile:
-		print line
-	ActiveSites(prot)
-	anchor = []
-	for res in profile:
-		if res[1] == 0:
-			anchor = res
-	for res in profile:
-		if res is not anchor:
-			adjustRes(anchor,res[0],res[1],res[2])
-
-cmd.extend("translate",adjustWrapper)
 	
-def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
+def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 	
 	cmd.cd(outdir)
 	proteinList = ECtoProt(EC)
@@ -355,6 +358,10 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 	using_windows = False
 	if os.name == "nt":
 		using_windows = True
+		
+	if dump == "true":
+		outfile = open('output.txt','w')
+	
 	#cmd.feedback('disable','all','actions')
 	#cmd.feedback("disable","all","results")
 	
@@ -369,10 +376,11 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 	
 	#Subset the protein list for now
 	if protein_cap != "none":
-		if len(proteinList) > protein_cap:
-			proteinList = proteinList[0:protein_cap]
+		if len(proteinList) > int(protein_cap):
+			proteinList = proteinList[0:int(protein_cap)]
 	
-	
+	#The following loop populates the proteins into their respective groups
+	#Groups are determined by pfam or uniprot ID, as shown on a couple lines down
 	for protein in proteinList:
 	
 		if db == "pfam":
@@ -404,8 +412,12 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 	
 	print "%s proteins with incomplete records"%(NullCount)
 	
+	
 	for entry in UPDictionary.keys():
 		print "%s: %s"%(entry,UPDictionary[entry])
+		if dump == "true":
+			outfile.write("%s: %s"%(entry,UPDictionary[entry]))
+			outfile.write('\n')
 		ProteinSet = UPDictionary[entry].split(",")
 		ProteinSet = list(set(ProteinSet))
 		ProfileSet = []
@@ -424,6 +436,8 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 			count = count + 1
 			if ActiveSites(protein) == 1:
 				protein = protein + "_active"
+				if dump == "true":
+					cmd.save("%s.pdb"%protein,"%s"%protein)
 				PROfile = SiteDistances(protein)
 				ProfileSet.append(PROfile)
 			if count % 5 == 0:
@@ -440,12 +454,14 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 			#within the active site
 			consensusDic = []
 			anchor = []
+			anchorset = []
 			ResCount = {}
 			for PROfile in ProfileSet:
 				for res in PROfile:
 					key = res[0]
+					
 					if res[1] == 0:
-							anchor = res
+						anchorset.append(res)
 							
 					if key not in DistDict.keys():
 						DistDict[key] = res[1]
@@ -461,6 +477,9 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 						ResCount[key] = 1
 					else:
 						ResCount[key] = ResCount[key] + 1
+						
+			print ""	
+				
 			print "------------------------------"
 			print "MOTIF STATS for %s_%s:"%(EC,entry)
 			print "Different stats: %s across %s proteins"%(str(len(DistDict.keys())),len(ProteinSet))
@@ -468,6 +487,12 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 			print "Residue Position, Residue, Distance from anchor, Angle, Count"
 			
 			for key in DistDict:
+				if len(anchorset) > 0:
+					anchormax = 0
+					for res in anchorset:
+						if ResCount[key] > anchormax:
+							anchormax = ResCount[key]
+							anchor = res
 				consensusDic.append([[key[0],key[1]],DistDict[key],AngleDict[key],ResCount[key]])		
 			
 			for line in consensusDic:
@@ -476,7 +501,16 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 			model = UPDictionary[entry].split(",")[0]
 			count = 0
 			while True:
+				print entry
+				print count
 				if ActiveSites(model) == 1:
+					stored.list = []
+					cmd.iterate("(%s and name ca)"%(model),"stored.list.append((resi,resn))")
+					if anchor[0] not in stored.list:
+						model = UPDictionary[entry].split(",")[count]
+						count = count + 1
+						cmd.remove('all')
+						continue
 					break
 				count = count + 1
 				if count >= len(UPDictionary[entry].split(",")):
@@ -522,15 +556,15 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 			for site in SubstituteSet:
 				cmd.remove("resi %s and not name ca+cb"%(site))
 			
-			#Uncomment this save and save in line 552 for pre and post translational structures.
-			#comment out 553
-			#cmd.save("%s_active_pre.pdb"%model,"%s_active"%model)
+			if dump == "true":
+				cmd.save("%s_%s_pre.pdb"%(EC,entry),"%s_active"%model)
 			
 			for key in consensusDic:
 				if key[0] in modelSites:
 					adjustRes(anchor, key[0], key[1], key[2], model)
-				
-			#cmd.save("%s_active_post.pdb"%model,"%s_active"%model)
+			
+			if dump == "true":
+				cmd.save("%s_%s_post.pdb"%(EC,entry),"%s_active"%model)
 			cmd.save("%s_%s.pdb"%(EC,entry),"%s_active"%model)
 			cmd.remove("all")
 			
@@ -548,6 +582,88 @@ def generateMotif(EC,entry_minimum,protein_cap,db,outdir):
 			print ""
 			UPDictionary.pop(entry)
 	
+	if dump == "true":
+		nullstr = ""
+		for prot in NullList:
+			cmd.fetch(prot)
+			cmd.remove(prot)
+			nullstr = prot+","+nullstr
+		nullstr = nullstr[:-1]
+		outfile.write("None: %s"%nullstr)
+		outfile.close()
+	
+	cmd.remove("all")
+	
+	print "done!"
 	
 cmd.extend("GenerateMotif",generateMotif)
-print "GenerateMotif EC, MinimumProteinsForGroup (number), MaxmimumProteinsTotal (none or a number), pfam/uniprot, OutputDirectory"
+print "GenerateMotif EC, MinProt, MaxProt, pfam/uniprot, DataDump, OutputDirectory"
+
+def EvalMotif(motif, db, dir):
+	'''
+	This method takes data dumped motifs, active sites, and protein structures 
+	and measures alignments
+	'''
+
+	if db != "PF" or db != "UP":
+		print "Enter the database argument as UP for UniProt or PF for PFam"
+		return
+	cmd.cd(dir)
+	file = open("output.txt",'r')
+	outfile = open("%s_%s_test.txt"%(motif,db),'w')
+	MotifDict = {}
+	
+	
+	for line in file:
+		print line
+		mname = line.split(' ')[0]
+		mname = mname[:-1]
+		if mname != "None":
+			mname = motif + "_" + mname
+		protlist = line.split(' ')[1]
+		if "\n" in protlist:
+			protlist = protlist[:protlist.index("\n")]
+		#protlist = protlist[:-2]
+		MotifDict[mname] = protlist
+
+	print MotifDict
+	for key in MotifDict:
+		if key == "None":
+			continue
+		try:
+			cmd.load("%s.pdb"%key)
+		except:
+			print "No motifs found for %s"%(key)
+			continue
+		for OKey in MotifDict:
+			protList = MotifDict[OKey].split(',')
+			for prot in protList:
+				if OKey == "None":
+					cmd.load("%s.pdb"%prot)
+					aln = cmd.align("%s"%key,"%s"%prot)
+					sup = cmd.super("%s"%key,"%s"%prot)
+					print "%s,%s,%s,%f,%f"%(key,OKey,prot,aln[0],sup[0])
+					outfile.write("%s,%s,%s,%f,%f\n"%(key,OKey,prot,aln[0],sup[0]))
+					cmd.remove("%s"%prot)
+				else:
+					try:
+						cmd.load("%s_active.pdb"%prot)
+						aln = cmd.align("%s"%key,"%s_active"%prot)
+						sup = cmd.super("%s"%key,"%s_active"%prot)
+						print "%s,%s,%s,%f,%f"%(key,OKey,prot,aln[0],sup[0])
+						outfile.write("%s,%s,%s,%f,%f\n"%(key,OKey,prot,aln[0],sup[0]))
+						cmd.remove("%s_active"%prot)
+					except:
+						print "No motifs found for %s"%(key)
+						try:
+							cmd.remove("%s_active.pdb"%prot)
+						except:
+							print "It's not your fault"
+			
+	cmd.remove("all")
+	print "done!"
+	file.close()
+	outfile.close()
+
+cmd.extend("EvalMotif",EvalMotif)
+print "EvalMotif EC, DumpDirectory"
