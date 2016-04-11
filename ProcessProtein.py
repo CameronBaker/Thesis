@@ -501,8 +501,6 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 			model = UPDictionary[entry].split(",")[0]
 			count = 0
 			while True:
-				print entry
-				print count
 				if ActiveSites(model) == 1:
 					stored.list = []
 					cmd.iterate("(%s and name ca)"%(model),"stored.list.append((resi,resn))")
@@ -563,8 +561,6 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 				if key[0] in modelSites:
 					adjustRes(anchor, key[0], key[1], key[2], model)
 			
-			if dump == "true":
-				cmd.save("%s_%s_post.pdb"%(EC,entry),"%s_active"%model)
 			cmd.save("%s_%s.pdb"%(EC,entry),"%s_active"%model)
 			cmd.remove("all")
 			
@@ -605,7 +601,7 @@ def EvalMotif(motif, db, dir):
 	and measures alignments
 	'''
 
-	if db != "PF" or db != "UP":
+	if str(db) not in "PFUP":
 		print "Enter the database argument as UP for UniProt or PF for PFam"
 		return
 	cmd.cd(dir)
@@ -666,4 +662,4 @@ def EvalMotif(motif, db, dir):
 	outfile.close()
 
 cmd.extend("EvalMotif",EvalMotif)
-print "EvalMotif EC, DumpDirectory"
+print "EvalMotif EC, db, DumpDirectory"
