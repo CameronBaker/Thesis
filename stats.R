@@ -37,10 +37,6 @@ boxplot_motifs <- function(filename){
 			  xlab="Protein Designation",ylab="RMSD")
 		dev.off()
 
-		jpeg(paste(title,"_super.jpg",sep=""),width=200*num_motifs)
-		boxplot(V5~V2,data=single_motif,ylim=c(0,0.5),main=paste(desig," super: ",motif,sep=""),
-			  xlab="Protein Designation",ylab="RMSD")
-		dev.off()
 	}
 	print("Done!")
 }

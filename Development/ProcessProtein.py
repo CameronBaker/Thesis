@@ -13,8 +13,7 @@ Cameron Baker
 
 '''
 Interesting notes
-Duplicate features in 1g66, 1h1w
-NOTE: generate sets for 2.7.11.1 and up 1.1.1.1
+Duplicate features in 1g66
 '''
 
 from pymol import cmd
@@ -38,8 +37,7 @@ def ActiveSites(prot):
 	
 	Internet connection needed
 	'''
-	cmd.fetch(prot)
-	ActiveRes = []
+	Sites = {}
 	response = urllib2.urlopen('https://www.ebi.ac.uk/thornton-srv/databases/CSA/SearchResults.php?PDBID=%s'%prot)
 	
 	#In chain is used to work around the respresentation of residues in CSA
@@ -48,37 +46,48 @@ def ActiveSites(prot):
 	#the sites for both the actual protein and the homologous as determined by CSA
 	inchain = True
 	
+	ActiveSite = []
+	i = 1
 	for line in response:
 			#Regex matches active sites for either 1, 2, or 3 digits and appends it to the active site list
-		for i in range(1,4):
-			exp = "<td>"+'.'*i+"</td>"
-			CurRes = re.findall(exp,line)
-			for res in CurRes:
-				res = res.split('>')[1].split('<')[0]
-				if res.isdigit() and inchain:
-					ActiveRes.append(res)
-					inchain = False
-				else:
-					inchain = True
+		exp = "<td>[0-9]+</td>"
+		CurRes = re.findall(exp,line)
+		if CurRes > 0:
+			for s in line.split("<th>UniProtKB Number</th>"):
+				cursite = "SITE "+str(i)
+				#print s
+				
+				ActiveSite = []
+				for res in CurRes:
+					res = res.split('>')[1].split('<')[0]
+					if res.isdigit() and inchain:
+						ActiveSite.append(res)
+						inchain = False
+					else:
+						inchain = True
+				ActiveSite = list(set(ActiveSite))
+				if ActiveSite not in Sites.values():
+					Sites[cursite] = ActiveSite
+					i = i + 1
 				
 		
 		#Only keeps unique residues
-		ActiveRes = list(set(ActiveRes))
+		
 		
 		#Align against the full protein if there are no active residues
-		#As long as one protein has an active site it should align well	
-	if len(ActiveRes) != 0:
-		cmd.remove('%s and not chain a'%(prot))
-		SelectStatement = "+".join(ActiveRes)
-		cmd.create('%s_active'%(prot),'resi %s in %s'%(SelectStatement,prot))
-		cmd.delete(prot)
-		#print "Active sites loaded"
-		return 1
+		#As long as one protein has an active site it should align well
+		
+	statements = []
+	response.close()
+	for value in Sites.values():
+		if len(value) != 0:
+			SelectStatement = "+".join(value)
+			statements.append(SelectStatement)
+	if len(statements) > 0:
+		return statements
 	else:
-		cmd.delete(prot)
 		print "no active sites found for "+prot
 		return 0
-	response.close()
 
 cmd.extend("ActiveSites", ActiveSites)
 print "ActiveSites pdbid"
@@ -95,43 +104,46 @@ def SiteDistances(prot):
 	residue's alpha carbon and each other residue's alpha and beta
 	carbons will be determined and returned to the user.
 	'''
-	
+	print "here: "+prot
 	#Retrieve the list of residues
 	stored.list = []
 	cmd.iterate("(%s and name ca)"%(prot),"stored.list.append((resi,resn))")
 	#print stored.list
-	
+	print prot
 	#Initialization of variables for finding the centermost residue
 	res_num = len(stored.list)
-	closest_res_res = 0
+	closest_res = 0
 	smallest_dist = 100
-	for res in stored.list:
-		temp_dist = 0
-		for res2 in stored.list:
-			try:
-				if res[0] != res2[0]:
-					temp_dist = temp_dist + \
+	if res_num == 1:
+		closest_res = stored.list[0]
+	else:
+		for res in stored.list:
+			temp_dist = 0
+			for res2 in stored.list:
+				try:
+					if res[0] != res2[0]:
+						temp_dist = temp_dist + \
 								cmd.get_distance("resi %s in %s and name ca"%(res[0],prot),
 											"resi %s in %s and name ca"%(res2[0],prot))
-			except:
-				stored_tmp = stored.list
-				if res[0] != res2[0]:
-					stored.list = []
-					cmd.iterate("(resi %s in %s and name ca)"%(res[0],prot),"stored.list.append((ID))")
-					if len(stored.list) > 1:
-						cmd.remove("id %s"%(stored.list[-1]))
-					stored.list = []
-					cmd.iterate("(resi %s in %s and name ca)"%(res2[0],prot),"stored.list.append((ID))")
-					if len(stored.list) > 1:
-						cmd.remove("id %s"%(stored.list[-1]))
-					temp_dist = temp_dist + \
+				except:
+					stored_tmp = stored.list
+					if res[0] != res2[0]:
+						stored.list = []
+						cmd.iterate("(resi %s in %s and name ca)"%(res[0],prot),"stored.list.append((ID))")
+						if len(stored.list) > 1:
+							cmd.remove("id %s"%(stored.list[-1]))
+						stored.list = []
+						cmd.iterate("(resi %s in %s and name ca)"%(res2[0],prot),"stored.list.append((ID))")
+						if len(stored.list) > 1:
+							cmd.remove("id %s"%(stored.list[-1]))
+						temp_dist = temp_dist + \
 								cmd.get_distance("resi %s in %s and name ca"%(res[0],prot),
 											"resi %s in %s and name ca"%(res2[0],prot))
-				stored.list = stored_tmp
-		temp_dist = temp_dist / (res_num - 1)
-		if temp_dist < smallest_dist:
-			smallest_dist = temp_dist
-			closest_res = res
+					stored.list = stored_tmp
+			temp_dist = temp_dist / (res_num - 1)
+			if temp_dist < smallest_dist:
+				smallest_dist = temp_dist
+				closest_res = res
 	#print closest_res
 	#print smallest_dist
 	
@@ -388,6 +400,7 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 		else:
 			UPID = UPfromProt(protein)
 			
+		print UPID
 		if UPID is 0:
 			count = count + 1
 			if count % 5 == 0:
@@ -395,17 +408,15 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 			NullCount = NullCount + 1
 			NullList.append(protein)
 			continue
-		if len(UPID) > 1:
+		if len(UPID) > 0:
 			for ID in UPID:
 				if ID not in UPDictionary.keys():
 					UPDictionary[ID] = protein
 				else:
 					UPDictionary[ID] = UPDictionary[ID]+","+protein
 		else:
-			if UPID[0] not in UPDictionary.keys():
-				UPDictionary[UPID[0]] = protein
-			else:
-				UPDictionary[UPID[0]] = UPDictionary[UPID[0]]+","+protein
+			NullCount = NullCount + 1
+			NullList.append(protein)
 		count = count + 1
 		if count % 5 == 0:
 			print "%s/%s"%(count,len(proteinList))
@@ -434,12 +445,18 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 			#Only keeps the active site if it successfully generated
 			#Successful generation is due to the active sites prescense within the CSA
 			count = count + 1
-			if ActiveSites(protein) == 1:
-				protein = protein + "_active"
-				if dump == "true":
-					cmd.save("%s.pdb"%protein,"%s"%protein)
-				PROfile = SiteDistances(protein)
-				ProfileSet.append(PROfile)
+			selects = ActiveSites(protein)
+			if selects != 0:
+				for select in selects:
+					cmd.fetch(protein)
+					cmd.remove('%s and not chain a'%(protein))
+					cmd.create('%s_active'%(protein),'resi %s in %s'%(select,protein))
+					if dump == "true":
+						cmd.save("%s.pdb"%protein,"%s"%protein)
+					cmd.delete(protein)
+					protein = protein + "_active"
+					PROfile = SiteDistances(protein)
+					ProfileSet.append(PROfile)
 			if count % 5 == 0:
 				print "%s/%s"%(count,len(ProteinSet))
 				
@@ -501,8 +518,14 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 			model = UPDictionary[entry].split(",")[0]
 			count = 0
 			while True:
-				if ActiveSites(model) == 1:
+				selects = ActiveSites(model)
+				if len(selects) != 0:
+					
 					stored.list = []
+					cmd.fetch(model)
+					cmd.remove('%s and not chain a'%(model))
+					cmd.create('%s_active'%(model),'resi %s in %s'%(select[0],model))
+					cmd.delete(model)
 					cmd.iterate("(%s and name ca)"%(model),"stored.list.append((resi,resn))")
 					if anchor[0] not in stored.list:
 						model = UPDictionary[entry].split(",")[count]
@@ -595,7 +618,7 @@ def generateMotif(EC,entry_minimum,protein_cap,db,dump,outdir):
 cmd.extend("GenerateMotif",generateMotif)
 print "GenerateMotif EC, MinProt, MaxProt, pfam/uniprot, DataDump, OutputDirectory"
 
-def EvalMotif(EC, db, dir):
+def EvalMotif(motif, db, dir):
 	'''
 	This method takes data dumped motifs, active sites, and protein structures 
 	and measures alignments
@@ -606,7 +629,7 @@ def EvalMotif(EC, db, dir):
 		return
 	cmd.cd(dir)
 	file = open("output.txt",'r')
-	outfile = open("%s_%s_test.txt"%(EC,db),'w')
+	outfile = open("%s_%s_test.txt"%(motif,db),'w')
 	MotifDict = {}
 	
 	
@@ -615,7 +638,7 @@ def EvalMotif(EC, db, dir):
 		mname = line.split(' ')[0]
 		mname = mname[:-1]
 		if mname != "None":
-			mname = EC + "_" + mname
+			mname = motif + "_" + mname
 		protlist = line.split(' ')[1]
 		if "\n" in protlist:
 			protlist = protlist[:protlist.index("\n")]
@@ -637,17 +660,15 @@ def EvalMotif(EC, db, dir):
 				if OKey == "None":
 					cmd.load("%s.pdb"%prot)
 					aln = cmd.align("%s"%key,"%s"%prot)
-					sup = cmd.super("%s"%key,"%s"%prot)
-					print "%s,%s,%s,%f,%f"%(key,OKey,prot,aln[0],sup[0])
-					outfile.write("%s,%s,%s,%f,%f\n"%(key,OKey,prot,aln[0],sup[0]))
+					print "%s,%s,%s,%f"%(key,OKey,prot,aln[0])
+					outfile.write("%s,%s,%s,%f\n"%(key,OKey,prot,aln[0]))
 					cmd.remove("%s"%prot)
 				else:
 					try:
 						cmd.load("%s_active.pdb"%prot)
 						aln = cmd.align("%s"%key,"%s_active"%prot)
-						sup = cmd.super("%s"%key,"%s_active"%prot)
-						print "%s,%s,%s,%f,%f"%(key,OKey,prot,aln[0],sup[0])
-						outfile.write("%s,%s,%s,%f,%f\n"%(key,OKey,prot,aln[0],sup[0]))
+						print "%s,%s,%s,%f"%(key,OKey,prot,aln[0])
+						outfile.write("%s,%s,%s,%f\n"%(key,OKey,prot,aln[0]))
 						cmd.remove("%s_active"%prot)
 					except:
 						print "No motifs found for %s"%(key)
@@ -663,3 +684,10 @@ def EvalMotif(EC, db, dir):
 
 cmd.extend("EvalMotif",EvalMotif)
 print "EvalMotif EC, db, DumpDirectory"
+
+def run():
+	ec_nums = ['2.4.2.4', '1.13.11.2', '3.4.21.100', '2.7.1.11', '2.4.2.14', '3.2.1.31', '4.1.1.41', '2.7.1.15', '3.2.1.35', '1.3.1.34', '4.1.1.48', '4.1.1.49', '2.3.1.15', '5.3.99.3', '1.1.5.2', '2.3.1.16', '4.2.1.94', '2.7.1.90', '1.1.1.158', '2.1.1.72', '3.1.11.2', '1.14.99.3', '1.3.99.1', '4.2.1.40', '4.2.2.1', '1.14.99.1', '3.4.21.62', '3.1.2.22', '2.3.1.74', '3.4.11.5', '3.2.1.133', '3.2.1.96', '1.6.99.1', '1.20.4.1', '2.4.1.38', '3.4.21.68', '2.5.1.7', '3.8.1.6', '3.8.1.5', '5.4.2.1', '2.5.1.3', '3.1.3.1', '3.1.3.2', '1.17.4.1', '2.1.3.3', '1.17.4.2', '2.6.1.62', '2.5.1.9', '1.1.99.28', '4.1.1.50', '3.6.1.7', '3.4.22.2', '4.2.1.20', '1.16.3.1', '2.7.1.69', '1.2.1.2', '5.1.3.20', '1.10.3.2', '3.1.1.29', '5.4.99.5', '4.1.99.4', '4.1.99.3', '5.4.99.1', '3.5.1.5', '3.1.1.6', '3.1.1.7', '3.1.1.4', '1.7.1.1', '4.2.1.24', '3.1.1.1', '4.4.1.1', '5.1.1.3', '3.6.1.29', '5.1.1.7', '2.4.2.1', '3.4.23.4', '1.1.3.38', '2.3.2.10', '2.6.1.57', '3.4.23.1', '3.2.1.10', '3.4.19.12', '3.2.1.14', '3.2.1.17', '3.4.21.4', '3.1.4.11', '3.4.21.7', '4.1.2.18', '5.3.4.1', '1.8.1.9', '2.7.7.12', '3.8.1.2', '2.4.1.1', '3.2.1.91', '2.1.4.2', '4.1.1.23', '3.1.25.1', '4.2.1.11', '2.3.1.118', '2.3.1.28', '4.6.1.13', '2.1.1.13', '3.1.3.57', '3.1.30.2', '1.1.99.18', '4.2.1.52', '5.1.3.14', '3.4.22.27', '3.1.3.33', '6.3.1.1', '5.3.3.10', '5.1.3.13', '5.3.3.8', '3.4.22.39', '3.4.21.87', '2.1.2.8', '5.3.3.1', '5.4.99.11', '6.3.3.3', '2.1.2.2', '5.4.3.8', '3.1.27.5', '1.3.1.20', '3.2.1.45', '3.5.1.1', '1.14.13.39', '6.3.5.4', '3.1.27.3', '1.3.1.26', '4.1.3.7', '3.4.23.24', '4.1.3.3', '3.4.23.20', '4.1.3.1', '3.4.23.22', '3.1.1.47', '2.8.2.4', '5.5.1.6', '3.5.2.6', '3.1.1.43', '3.1.3.48', '3.1.1.41', '1.1.1.252', '1.5.1.34', '3.2.1.68', '4.1.1.39', '3.2.2.22', '2.4.1.25', '1.18.1.2', '6.3.2.3', '4.2.1.47', '2.5.1.19', '2.1.1.45', '2.1.4.1', '2.3.1.47', '2.1.1.48', '5.3.1.1', '2.6.1.1', '2.5.1.15', '5.3.1.5', '1.6.1.2', '3.5.1.77', '1.1.1.28', '3.4.21.92', '4.4.1.14', '4.1.2.13', '2.7.7.3', '3.2.1.129', '3.2.1.73', '2.7.1.40', '3.1.1.3', '5.3.99.2', '3.4.16.5', '3.4.22.40', '3.1.3.46', '2.3.1.41', '4.2.1.92', '2.2.1.2', '1.5.1.28', '1.11.1.6', '1.11.1.5', '3.2.1.113', '1.11.1.1', '1.2.7.1', '3.4.22.53', '3.1.4.4', '3.2.1.8', '3.1.27.4', '3.1.3.16', '2.4.1.207', '3.2.1.1', '1.1.1.35', '3.4.17.11', '1.1.1.37', '3.2.1.78', '1.2.1.12', '1.2.1.11', '6.3.2.1', '4.1.2.25', '4.2.1.3', '6.3.2.4', '4.2.1.1', '1.1.3.15', '3.1.27.1', '6.3.2.9', '1.11.1.10', '1.11.1.11', '3.2.3.1', '1.3.1.24', '2.3.1.9', '6.3.4.5', '2.6.1.21', '5.2.1.8', '4.2.2.5', '3.4.13.21', '4.99.1.1', '5.4.2.9', '3.1.1.61', '2.4.2.22', '2.3.1.54', '3.4.23.25', '2.3.3.9', '1.1.1.49', '3.7.1.8', '3.4.22.37', '2.7.7.48', '2.3.3.1', '2.4.1.44', '3.2.2.20', '2.7.4.6', '1.5.8.2', '1.1.2.3', '1.1.1.29', '4.1.2.39', '2.1.1.63', '1.14.17.3', '1.1.1.22', '1.1.1.21', '4.1.1.20', '1.1.1.27', '2.3.1.87', '2.7.4.3', '1.4.1.1', '2.1.1.113', '3.7.1.9', '3.4.23.23', '3.5.1.45', '3.2.1.52', '1.14.15.1', '3.5.3.15', '3.4.22.16', '2.7.6.3', '2.5.1.2', '3.5.4.4', '2.6.1.16', '3.4.23.15', '6.1.1.11', '2.7.1.38', '3.5.99.6', '1.2.1.59', '5.5.1.5', '4.1.1.64', '2.4.2.36', '6.1.1.19', '6.1.1.18', '2.7.1.37', '3.1.21.1', '2.4.2.31', '2.4.1.19', '3.4.21.26', '2.3.1.39', '1.2.1.8', '3.1.1.11', '3.1.1.13', '3.4.23.21', '3.5.1.11', '5.5.1.1', '2.4.1.10', '6.3.4.4', '3.4.21.43', '3.1.4.8', '4.2.1.10', '3.4.11.1', '2.3.1.97', '3.2.1.89', '4.1.2.20', '4.2.1.17', '1.14.13.7', '3.4.24.69', '2.3.2.13', '1.1.1.1', '1.1.1.3', '3.1.3.11', '1.1.1.8', '2.5.1.61', '3.2.1.21', '2.7.2.1', '4.2.3.3', '1.5.1.3', '4.2.3.9', '1.5.1.6', '4.2.1.60', '5.99.1.2', '5.99.1.3', '1.15.1.1', '4.2.99.18', '5.1.3.3', '5.1.3.1', '3.4.11.19', '3.1.27.10', '3.3.2.8', '1.14.19.2']
+	for ec in ec_nums:
+		generateMotif(ec,1,1000,'uniprot','false','C:/Users/Cameron/Documents/Pymol')
+		generateMotif(ec,1,1000,'pfam','false','C:/Users/Cameron/Documents/Pymol')
+cmd.extend("run",run)
